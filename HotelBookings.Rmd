@@ -1,0 +1,351 @@
+---
+title: "Hotel Bookings"
+author: "Nicolas Pacheco Soliz"
+date: "8/14/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+Purpose: The purpose of this project is to conduct an EDA of hotel bookings and answer questions given data. Next, we want to attempt to predict whether or not a hotel will be booked using classical machine learning algorithms. 
+```{r}
+
+#install.packages("readr")
+library(readr)
+#install.packages("dplyr")
+#install.packages("tidyverse")
+library(dplyr)
+#install.packages("ggplot2")
+library(ggplot2)
+#install.packages("lubridate")
+library(lubridate)
+library(tidyverse)
+library(car)
+
+
+df <- read_csv("hotel_bookings.csv")
+
+
+##what countries have the most hotel bookings? 
+## what are the trends for different hotel bookings? what times of year seem to be most busy?
+##high number of cancellations per time of year? 
+#bookings by market segment? 
+#which month has the highest number of canllations?
+##how much do guests pay for a room per night?
+
+##which has more cancellations, resort or ohther hotel? 
+
+####lead times vs canclled density
+
+##we canu sne density curves here!
+
+
+
+```
+
+
+
+Data Cleaning 
+```{r}
+str(df)
+
+df$is_canceled <- as.factor(df$is_canceled)
+levels(df$is_canceled) <- c("Not Canceled", "Canceled")
+
+##checking for missing values 
+df[which(is.na(df)),]  ## only 4 NAs, so we will omit the missing valules 
+df<- na.omit(df)##Data without NAs
+str(df)
+
+
+##we also see that companies and agents also have "NULL" values;
+
+nrow(df[which(df$company == "NULL"),])/ nrow(df)  ##94% of these values in this column have missing values, so we will have to delete this column 
+
+df <- df %>% select(-company)
+
+nrow(df[which(df$agent == "NULL"),])/ nrow(df) ##13% of agent rows are missing, so we will investigate this later; 
+
+```
+
+
+Time Series Analysis
+```{r}
+
+
+df$date <- as.Date(strptime(paste(df$arrival_date_year, df$arrival_date_month,df$arrival_date_day_of_month,sep="-"), format = "%Y-%b-%d"))
+timedata <- df %>% group_by(date) %>% count(date)
+
+ggplot(timedata, aes(x=date, y=n)) + geom_line() +  xlab("") + ggtitle("Number of Bookings Over Time") + theme(plot.title = element_text(hjust = 0.5))
+
+
+
+ggplot(data = df, aes(x = arrival_date_month)) + geom_bar(aes(fill = is_canceled), width = 0.5) + ggtitle("Bookings and Cancelletations Per Month") + theme(plot.title = element_text(hjust = 0.5)) + coord_flip()
+
+
+```
+
+Cancelations By Month
+
+```{r}
+
+#order <- df %>% group_by(arrival_date_month) %>% count(arrival_date_month) %>% arrange(desc(n)) ##if we want to make it by order, we can these two lines of code 
+#df$arrival_date_month  <- factor(df$arrival_date_month, levels = order$arrival_date_month)
+
+###here we see bookings and cancellations per monts; 
+
+df$arrival_date_month  <- factor(df$arrival_date_month, levels =c("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")) ##Reordering the months 
+ggplot(data = df, aes(x = arrival_date_month)) + geom_bar(aes(fill = is_canceled), width = 0.5) + ggtitle("Bookings and Cancelletations Per Month") + theme(plot.title = element_text(hjust = 0.5)) + coord_flip() 
+
+##from the plot, we can see that the higher the number of bookings, the higher the cancellation rate; they tend to move with each other; if this is the case, and the proportion of cancelations is relatively constant, then taking into account month might provide strong predictive power for our model. 
+
+
+#let's find the cancellation rates per month, and figure out all months are proportional or some have a higher cancelations than others 
+perc_cancellations <- df %>% group_by(arrival_date_month) %>% summarise(perc = mean(is_canceled))
+mean(df$is_canceled)  ##Overall cancellation rate is 37%
+
+
+ggplot(data = perc_cancellations) +  geom_bar(aes(x = arrival_date_month, y = perc, fill = perc), stat = 'identity') +  scale_fill_gradient(high = "#132B43",
+  low = "#56B1F7") + ggtitle("Percent Cancelations By Month") + theme(plot.title = element_text(hjust = 0.5)) ## people are most likely to cancel in the beginning of the year 
+##from the plot above we can see that the higher the cancelation months tend to be april and june; these dates mark spring break and beginning of summer, so this is likely why we tend to see a higher conentration of canelleations here 
+
+
+
+
+
+
+```
+
+
+```{r}
+
+ggplot(data =df, aes(x = lead_time)) + geom_density(aes(fill = is_canceled),  stat = 'density', alpha= 0.5) + ggtitle("\tFrequency of Cancellations Given Lead Times") + theme(plot.title = element_text(hjust = 0.5))
+
+p = ggplot(data = df)
+
+
+##We can see that most of the cancellations happened with low lead time; there is an obvious relationship between lead time and nubmer of cancellations; 
+
+```
+
+
+From this point, we can definitely include the month and cancelation in our model; let's identify some other relationships 
+
+
+What countries book tend to account for most of the bookings? Which countries have the highest number of cancelations? 
+
+```{r}
+
+
+
+###how likely are repeated guests to cancel? 
+tab <- table(hotels$is_canceled, hotels$is_repeated_guest)
+tab
+##given that a guest cancels, it is is more likely they are NOT a repeated guest; only 552 guests that canceled were repeated guests; roughly 96.5% of guests who cacneled where non returning, where as 3.5% of cacnelations were returning guests; 
+
+42672 / (43672 + 552)
+
+
+
+#then, we can look at customer segmentation(which country they come from, how they booked; once we do that, we can once again relate to this cancelations); perhaps we can see what type of families are coming to these hotels as well 
+
+top_countries <- df %>% group_by(country) %>% count(country) %>% arrange(desc(n))
+top <- top_countries[1:20,]
+ggplot(top, aes(x = country , y = n)) + geom_bar( stat = 'identity')  ##We can see most bookings come from portual or other european countries; makes sense considering these hotels are booked in europe 
+
+
+
+###market segmentation 
+ggplot(df, aes(x = factor(1), fill = market_segment)) + geom_bar(width = 1) + coord_polar(theta = "y") + theme_void()
+
+ggplot(df, aes(x = market_segment, fill = factor(is_canceled))) + geom_bar() ###it seems that groups market_segment is the most likely to cancel, while direct is the least likeliy to cancel 
+
+
+##customer types 
+ggplot(df, aes(x = factor(1), fill = customer_type)) + geom_bar(width = 1) + coord_polar(theta = "y") + theme_void()
+ggplot(df, aes(x = customer_type, fill = is_canceled)) + geom_bar() ###transient customers most likley to cancel 
+
+
+##we can also find the probabilities of each group being likely to cancel 
+df %>% group_by(market_segment) %>% summarise(ProbabilityofCancelation = mean(is_canceled)) %>% ggplot(aes(x= market_segment , y = ProbabilityofCancelation)) + geom_bar(stat = 'identity')
+
+##there is variation, so we can definitely include this in our model 
+
+######################################
+
+#PRICE RELATIONSHIPS 
+
+##once we do this, we can look at relationship sbetween type of room and price; then we can see if there's a relationship between price and cancelation or tyoe of room and cancelation 
+
+
+##let's also observe the distribution of stay in weekend nights vs stay in week nights; how do adr 
+df
+
+##I would like to know if prices tend to be higher on stays_in_wekedn_nights vs week nights; how exactly will this help our model? 
+##It proabbly won;t 
+
+##essentially, the goal is to see how adr will affect changes in booking prices; if adr will affect booking prices, then this has taken into account stays in weekend nights
+
+##suppose we have a high number of stays; then adr will likely be smaller? and if it's smaller, then 
+
+
+##adr versus number of stays; 
+plot(data = df, adr ~ stays_in_weekend_nights + stays_in_week_nights)  
+
+##we can see that these follow nearly identical strends; the average daily rate for each given stay, whether in week nights or weekend nights, does not seem to affect 
+##adr that much; 
+
+
+##but let's see if how much adr differs based on bookings vs cancellations; the question is: does knowing there is a higher pricing for one hotel booking mean
+#that someone is less likely to cancel? 
+
+
+ggplot(data =df, aes(x = factor(is_canceled),  y = adr)) + geom_boxplot()
+##there's an outlier in this plot that distorts our boxplot; we will remove the outlier to get a better picture 
+
+df_no_outlier <- df[-which(df$adr == max(df$adr)),]
+
+ggplot(data =df_no_outlier, aes(x = factor(is_canceled),  y = adr)) + geom_boxplot(col = "blue")
+
+
+##on average, it seems like people who canceled tend to have a higher adr; however, let's conduct a t.test to see if there differences in means is significant 
+t.test(df$adr ~ df$is_canceled, var.equal = TRUE)
+
+##according to this, there is a statistically significant difference given the means. So, even though our visualization does show a strong relationship, we will use adr in our model. 
+
+
+##we also want to see some distinctions between the two hotels; the purpose of this task is to identify the general trends and factors leading to drops in bookign times; 
+##of course, we want to see the differences in the two hotels;  we will include this in our model 
+
+
+##Our goal is to generalize and create a model for all hotel bookings, but to do this, we have to take into account differences between the two hotels give to us. 
+
+
+ggplot(data = df, aes(x = hotel, fill = factor(is_canceled))) + geom_bar()
+
+## we have many more data points from the city hotel; relatively, we can see that more people tend to cancel with the city hotel; 
+
+##let's look at price differences between the city hotel and resort hotel 
+
+ggplot(data = df_no_outlier, aes(x = assigned_room_type, y = adr, fill = hotel)) + geom_boxplot()
+
+##given the room type, on average we see city hotels are higher for most room types; 
+df %>% group_by(assigned_room_type) %>% summarise(avgprice = mean(adr)) %>% ggplot(aes(x = assigned_room_type, y = avgprice)) + geom_bar(stat = 'identity', fill = 'orange')
+
+
+
+```
+
+
+
+Classification 
+
+Lgistic regression 
+```{r}
+
+
+df$is_canceled = as.factor(df$is_canceled)
+
+##training/testing model 
+smp_size <- floor(0.75 * nrow(df))
+
+## set the seed to make your partition reproducible
+set.seed(123)
+train_ind <- sample(seq_len(nrow(df)), size = smp_size)
+
+train <- df[train_ind, ]
+test <- df[-train_ind, ]
+
+model <- glm(data = train, is_canceled ~ adr +  lead_time+ arrival_date_month + adults + children + babies + hotel, family = "binomial")
+
+summary(model)
+
+
+##Assessing our model
+##we can see the most important predictors here 
+anova(model, test = "Chisq") 
+
+##null model is only the model with the intercept; 
+##higher rresdiaul deviance means your model is doing better; 
+
+probs <- predict(model, test[-2], type = "response" )
+
+our.pred = rep("0", dim(test)[1])
+our.pred[our.pred > .5] = "1"
+
+mean(our.pred == train$is_canceled)
+misClasificError <- mean(fitted.results != test$Survived)
+
+vif(model)
+plot(test$is_canceled, our.pred)
+summary(model)
+
+
+
+```
+
+
+random forest 
+
+```{r}
+
+##some packages for this model 
+library(cowplot) 
+library(randomForest)
+
+
+df<-df %>% select(-c("arrival_date_year","company" , "arrival_date_week_number", "arrival_date_day_of_month", "agent","days_in_waiting_list", "reservation_status", "reservation_status_date"))
+
+df <- df %>% select(-c("country"))
+df <- df %>% select(-c("meal", "distribution_channel"))
+df$is_canceled <- as.factor(df$is_canceled)
+
+levels(df$is_canceled) <- c("Not Canceled", "Canceled")
+df[which(is.na(df)),]  ## only 4 NAs, so we will omit the missing valules 
+df<- na.omit(df)##Data without NAs
+
+
+model <- randomForest(is_canceled ~. ,data = df[1:2000,], ntree = 1000,  proximity = TRUE) 
+?randomForest
+#Returns the proximity matrix
+model
+#notice classifciation is default, since we are predicting categorical variable
+#number of trees is 500, no of variabels at each split is 3 (by default)
+
+
+#OOB error estimate
+
+#83.5% of ourt of bag samples were correctly classified by random forest 
+
+#confusion matrix to show results  
+randomForest
+
+oob.error.data <- data.frame(
+  Number_of_Trees=rep(1:nrow(model$err.rate), times=3),
+  Type=rep(c("OOB", "Not Canceled", "Canceled"), each=nrow(model$err.rate)),
+  Error_Type=c(model$err.rate[,"OOB"], 
+    model$err.rate[,"Not Canceled"], 
+    model$err.rate[,"Canceled"]))
+
+ggplot(data=oob.error.data, aes(x=Number_of_Trees, y=Error_Type)) +
+  geom_line(aes(color=Type)) + ggtitle("Plotting Errors for each Tree")
+##after 600 trees, variability seems to drop quite a bit;thus, optimal number of trees we'll choose 600 
+
+
+##now we will use cross validation to find the optimal number of trees 
+##mtry is the number of selections per each cut in the trees 
+oob.values <- vector(length=10)
+for(i in 1:10) {
+  temp.model <- randomForest(is_canceled ~. ,mtry = i, data = df[1:2000,], ntree = 600) 
+  oob.values[i] <- temp.model$err.rate[nrow(temp.model$err.rate),1]
+}
+
+oob.values[which(oob.values == min(oob.values))]
+##20.2 is the lowest out of bag error we get 
+
+```
+
